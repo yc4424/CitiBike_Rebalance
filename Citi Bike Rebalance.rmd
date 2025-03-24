@@ -1,0 +1,153 @@
+---
+title: 'Citi Bike Rebalance'
+author:
+  - name: YiChen Chen
+date: '`r Sys.Date()`'
+output: distill::distill_article
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  eval = TRUE,
+  echo = TRUE,
+  message = FALSE,
+  error = FALSE,
+  warning = FALSE
+)
+```
+
+
+
+
+```{r}
+library(tidyverse)
+```
+
+We gather data from the New York City Bike Share data repository: <https://ride.citibikenyc.com/system-data>. 
+
+```{r}
+savefile <- "data/201909-citibike-tripdata.csv"
+
+if (!file.exists(savefile)) {
+  url <- "https://s3.amazonaws.com/tripdata/201909-citibike-tripdata.csv.zip"
+  download.file(url = url, destfile = savefile )
+  }
+
+df <- read_csv(savefile)
+```
+
+
+
+```{r}
+df <- df %>% rename_with(~ gsub(' ', '_', .) )
+df
+```
+
+
+
+```{r}
+df <- 
+  df %>% 
+  filter(
+    if_any(contains('station_name'), ~ !is.na(.)),
+    end_station_name %in% start_station_name
+  )
+df
+```
+
+
+
+```{r}
+df <- 
+  df %>%
+  pivot_longer(
+    cols = c(start_station_name, end_station_name), 
+    names_to = "start_end",
+    values_to = "station_name"
+  ) %>%
+  mutate(
+    day  = format( if_else(start_end == "start_station_name", starttime, stoptime), "%d" ),
+    hour = format( if_else(start_end == "start_station_name", starttime, stoptime), "%H" )
+  ) %>%
+  mutate(
+    station_name = fct_reorder(station_name, desc(station_name))
+  )
+df
+```
+
+
+
+```{r}
+df <- 
+  df %>%
+  group_by(station_name, hour, .drop = FALSE) %>%
+  
+  summarise(
+    activity = mean(n()), 
+    balance  = sum(if_else(start_end == 'start_station_name', 1, -1)) 
+  ) %>%
+  
+  ungroup()
+df
+
+
+```
+
+
+```{r}
+library(scales)
+
+df <-
+  df %>%
+  mutate(
+    hue = if_else(balance < 0, 50, 200),
+    saturation =
+      rescale(
+        abs(balance),
+        from = c(0, max(abs(df$balance))),
+        to   = c(0, 100)
+      ),
+    luminance =
+      rescale(
+        activity,
+        from = c(0, max(abs(df$activity))),
+        to   = c(0, 100)
+      )
+  )
+df
+```
+
+
+
+```{r}
+p <- 
+  df %>%
+  ggplot() +
+  scale_fill_identity() +
+  geom_tile(
+    mapping = aes(
+     x= hour,
+     y= station_name,
+     fill = hcl(h = hue, l = luminance, c = saturation) 
+    ),
+    width = 0.95,
+    height = 0.95
+  ) +
+  theme_dark() +
+  theme(
+    panel.background = element_blank(),
+    panel.grid = element_blank(),
+    plot.background = element_rect(fill = "#333333"),
+    axis.text.x = element_text(color = "#888888", size = 16 / .pt),
+    axis.text.y = element_text(color = "#888888", size =  7 / .pt)
+  ) +
+  labs(x = "", y = "")
+
+# The next line of code will save the graphic as a pdf onto your working
+# directory so that you can separately open and zoom in while reviewing it.
+ggsave("activity_balance2019.pdf", plot = p, width = 8, height = 40)
+
+p
+```
+
+
